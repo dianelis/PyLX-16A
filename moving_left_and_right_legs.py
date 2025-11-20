@@ -119,38 +119,39 @@ def pose_from_neutral(deltas_dict=None, **deltas):
 # ============================================================================
 
 # Left leg step sequence - Big knee and ankle movements, minimal hip
+# Swapped: Left leg now uses what was the right leg sequence
 LEFT_LEG_STEP_SEQUENCE = [
     # 1) Lift left leg: Bend knee and flex ankle to clear ground
     pose_from_neutral({
-        LEFT_HIP: 0,      # Hip stays neutral
-        LEFT_KNEE: +50,   # Big knee bend to lift leg
-        LEFT_ANKLE: -40,  # Ankle flexes up to clear ground
         # Right leg stays in neutral (supporting leg)
         RIGHT_HIP: 0,
         RIGHT_KNEE: 0,
         RIGHT_ANKLE: 0,
+        LEFT_HIP: 0,      # Hip stays neutral
+        LEFT_KNEE: +50,   # Big knee bend to lift leg
+        LEFT_ANKLE: -40,  # Ankle flexes up to clear ground
     }),
     
     # 2) Swing left leg forward: Extend knee and ankle forward
     pose_from_neutral({
-        LEFT_HIP: 0,      # Hip stays neutral
-        LEFT_KNEE: +30,   # Partially extend knee for forward swing
-        LEFT_ANKLE: -20,  # Ankle extends forward
         # Right leg stays in neutral
         RIGHT_HIP: 0,
         RIGHT_KNEE: 0,
         RIGHT_ANKLE: 0,
+        LEFT_HIP: 0,      # Hip stays neutral
+        LEFT_KNEE: +30,   # Partially extend knee for forward swing
+        LEFT_ANKLE: -20,  # Ankle extends forward
     }),
     
     # 3) Place left foot down: Extend knee and ankle to contact ground
     pose_from_neutral({
-        LEFT_HIP: 0,      # Hip stays neutral
-        LEFT_KNEE: +10,   # Slight knee bend for landing
-        LEFT_ANKLE: 0,    # Ankle neutral for ground contact
         # Right leg stays in neutral
         RIGHT_HIP: 0,
         RIGHT_KNEE: 0,
         RIGHT_ANKLE: 0,
+        LEFT_HIP: 0,      # Hip stays neutral
+        LEFT_KNEE: +10,   # Slight knee bend for landing
+        LEFT_ANKLE: 0,    # Ankle neutral for ground contact
     }),
     
     # 4) Return to neutral
@@ -158,38 +159,39 @@ LEFT_LEG_STEP_SEQUENCE = [
 ]
 
 # Right leg step sequence - Big knee and ankle movements, minimal hip
+# Swapped: Right leg now uses what was the left leg sequence
 RIGHT_LEG_STEP_SEQUENCE = [
     # 1) Lift right leg: Bend knee and flex ankle to clear ground
     pose_from_neutral({
+        RIGHT_HIP: 0,     # Hip stays neutral
+        RIGHT_KNEE: +50,  # Big knee bend to lift leg
+        RIGHT_ANKLE: -40, # Ankle flexes up to clear ground
         # Left leg stays in neutral (supporting leg)
         LEFT_HIP: 0,
         LEFT_KNEE: 0,
         LEFT_ANKLE: 0,
-        RIGHT_HIP: 0,     # Hip stays neutral
-        RIGHT_KNEE: +50,  # Big knee bend to lift leg
-        RIGHT_ANKLE: -40, # Ankle flexes up to clear ground
     }),
     
     # 2) Swing right leg forward: Extend knee and ankle forward
     pose_from_neutral({
+        RIGHT_HIP: 0,     # Hip stays neutral
+        RIGHT_KNEE: +30,  # Partially extend knee for forward swing
+        RIGHT_ANKLE: -20, # Ankle extends forward
         # Left leg stays in neutral
         LEFT_HIP: 0,
         LEFT_KNEE: 0,
         LEFT_ANKLE: 0,
-        RIGHT_HIP: 0,     # Hip stays neutral
-        RIGHT_KNEE: +30,  # Partially extend knee for forward swing
-        RIGHT_ANKLE: -20, # Ankle extends forward
     }),
     
     # 3) Place right foot down: Extend knee and ankle to contact ground
     pose_from_neutral({
+        RIGHT_HIP: 0,     # Hip stays neutral
+        RIGHT_KNEE: +10,  # Slight knee bend for landing
+        RIGHT_ANKLE: 0,  # Ankle neutral for ground contact
         # Left leg stays in neutral
         LEFT_HIP: 0,
         LEFT_KNEE: 0,
         LEFT_ANKLE: 0,
-        RIGHT_HIP: 0,     # Hip stays neutral
-        RIGHT_KNEE: +10, # Slight knee bend for landing
-        RIGHT_ANKLE: 0,  # Ankle neutral for ground contact
     }),
     
     # 4) Return to neutral
@@ -264,7 +266,7 @@ def main():
     # Use try/finally to ensure we always return to neutral
     try:
         # Walk forward using the coordinated keyframe sequence
-        walk_forward(steps=5, t_ms=450)
+        walk_forward(steps=10, t_ms=450)
         
         print("\n" + "=" * 60)
         print("Demo complete!")
