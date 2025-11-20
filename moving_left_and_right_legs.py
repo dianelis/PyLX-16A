@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+git a#!/usr/bin/env python3
 """
 Moving Left and Right Legs - Dual Leg Stepping Control
 Controls both left and right robotic legs with LewanSoul LX-16A servos.
@@ -17,26 +17,26 @@ import math
 SERIAL_PORT = "/dev/tty.usbserial-210"  # Change to your port (e.g., "/dev/tty.usbserial-210" on Mac)
 BAUD_RATE = 0.1  # Timeout in seconds
 
-# Servo IDs - Left Leg
-LEFT_HIP = 30
-LEFT_KNEE = 10  # Knee servo with big angle swing
-LEFT_ANKLE = 20
+# Servo IDs - Left Leg (from our view, left to right, bottom to top)
+LEFT_ANKLE = 40  # Bottom
+LEFT_KNEE = 10   # Middle
+LEFT_HIP = 20    # Top
 
-# Servo IDs - Right Leg
-RIGHT_HIP = 40
-RIGHT_KNEE = 50
-RIGHT_ANKLE = 60
+# Servo IDs - Right Leg (from our view, left to right, bottom to top)
+RIGHT_ANKLE = 30  # Bottom
+RIGHT_KNEE = 60   # Middle
+RIGHT_HIP = 50    # Top
 
 # Neutral standing pose angles (degrees) - Separate for each leg
-# Left Leg neutral angles (original values)
-LEFT_HIP_NEUTRAL = 135.0
-LEFT_KNEE_NEUTRAL = 135.0
-LEFT_ANKLE_NEUTRAL = 135.0
+# Left Leg neutral angles (saved from current position)
+LEFT_HIP_NEUTRAL = 215.3
+LEFT_KNEE_NEUTRAL = 123.6
+LEFT_ANKLE_NEUTRAL = 123.1
 
-# Right Leg neutral angles (current straight position)
-RIGHT_HIP_NEUTRAL = 135.0  # Will be updated from right leg's current position
-RIGHT_KNEE_NEUTRAL = 135.0  # Will be updated from right leg's current position
-RIGHT_ANKLE_NEUTRAL = 100.0  # Right leg ankle (servo 60) straight position
+# Right Leg neutral angles (saved from current position)
+RIGHT_HIP_NEUTRAL = 234.0
+RIGHT_KNEE_NEUTRAL = 107.3
+RIGHT_ANKLE_NEUTRAL = 177.4
 
 # Legacy variables for backward compatibility (will use left leg values)
 HIP_NEUTRAL = LEFT_HIP_NEUTRAL
@@ -348,17 +348,19 @@ class Leg:
         num_steps = 100
         dt = step_duration_sec / num_steps
         
-        # Motion pattern:
-        # 1. Servo 30 (hip) - do not move (stay at neutral/0)
-        # 2. Servo 10 (knee) - first move big swing forward
-        # 3. Servo 20 (ankle) - right after knee, also big swing forward
-        # 4. Then all servos get straight to 90 degree angle (neutral position)
+        # Motion pattern for bipedal walking:
+        # 1. Hip servo - stays at neutral (does not move)
+        # 2. Knee servo - first moves with big swing forward
+        # 3. Ankle servo - right after knee, also big swing forward
+        # 4. Then all servos return to straight 90 degree angle (neutral position)
         
         # Phase 1: Knee swings forward first (big angle swing)
-        knee_forward_angle = 50.0  # Big swing forward (relative to neutral, 135+50=185 absolute)
+        # This lifts the leg and prepares for forward motion
+        knee_forward_angle = 50.0  # Big swing forward (relative to neutral)
         
         # Phase 2: Ankle swings forward right after knee (big angle swing)
-        ankle_forward_angle = 45.0  # Big swing forward (relative to neutral, 135+45=180 absolute)
+        # This extends the foot forward for the step
+        ankle_forward_angle = 45.0  # Big swing forward (relative to neutral)
         
         # Phase 3: Return to neutral (straight 90-degree position)
         # All servos return to exactly 0.0 relative (which is 135° absolute = 90° physical)
@@ -490,36 +492,78 @@ def main():
         left_leg._read_current_positions()
         right_leg._read_current_positions()
         
-        # Read right leg's current positions to use as neutral (straight position)
-        print("\n📐 Reading Right Leg's current straight position to use as neutral...")
+        # Read both legs' current positions to use as neutral (initial desired position)
+        print("\n📐 Reading current positions to save as initial desired position...")
         # Declare global at the start
+        global LEFT_HIP_NEUTRAL, LEFT_KNEE_NEUTRAL, LEFT_ANKLE_NEUTRAL
         global RIGHT_HIP_NEUTRAL, RIGHT_KNEE_NEUTRAL, RIGHT_ANKLE_NEUTRAL
+        
         try:
+            # Read left leg current positions
+            left_hip_pos = left_leg.hip_servo.get_physical_angle() if left_leg.hip_servo is not None else LEFT_HIP_NEUTRAL
+            left_knee_pos = left_leg.knee_servo.get_physical_angle() if left_leg.knee_servo is not None else LEFT_KNEE_NEUTRAL
+            left_ankle_pos = left_leg.ankle_servo.get_physical_angle() if left_leg.ankle_servo is not None else LEFT_ANKLE_NEUTRAL
+            
+            # Read right leg current positions
             right_hip_pos = right_leg.hip_servo.get_physical_angle() if right_leg.hip_servo is not None else RIGHT_HIP_NEUTRAL
             right_knee_pos = right_leg.knee_servo.get_physical_angle() if right_leg.knee_servo is not None else RIGHT_KNEE_NEUTRAL
             right_ankle_pos = right_leg.ankle_servo.get_physical_angle() if right_leg.ankle_servo is not None else RIGHT_ANKLE_NEUTRAL
             
-            print(f"  Right Leg Straight Position:")
+            print(f"  Left Leg Current Position (saving as neutral):")
+            print(f"    Hip (ID {LEFT_HIP}): {left_hip_pos:.2f}°")
+            print(f"    Knee (ID {LEFT_KNEE}): {left_knee_pos:.2f}°")
+            print(f"    Ankle (ID {LEFT_ANKLE}): {left_ankle_pos:.2f}°")
+            
+            print(f"\n  Right Leg Current Position (saving as neutral):")
             print(f"    Hip (ID {RIGHT_HIP}): {right_hip_pos:.2f}°")
             print(f"    Knee (ID {RIGHT_KNEE}): {right_knee_pos:.2f}°")
             print(f"    Ankle (ID {RIGHT_ANKLE}): {right_ankle_pos:.2f}°")
-            print(f"\n  → Using these as neutral angles for right leg")
-            print(f"  → Update RIGHT_HIP_NEUTRAL={right_hip_pos:.1f}, RIGHT_KNEE_NEUTRAL={right_knee_pos:.1f}, RIGHT_ANKLE_NEUTRAL={right_ankle_pos:.1f} in code")
             
-            # Update right leg neutral values dynamically based on current position
+            # Update left leg neutral values
+            LEFT_HIP_NEUTRAL = left_hip_pos
+            LEFT_KNEE_NEUTRAL = left_knee_pos
+            LEFT_ANKLE_NEUTRAL = left_ankle_pos
+            
+            # Update right leg neutral values
             RIGHT_HIP_NEUTRAL = right_hip_pos
             RIGHT_KNEE_NEUTRAL = right_knee_pos
             RIGHT_ANKLE_NEUTRAL = right_ankle_pos
             
-            # Update the right leg object's neutral angles
+            # Update both leg objects' neutral angles
+            left_leg.hip_neutral = left_hip_pos
+            left_leg.knee_neutral = left_knee_pos
+            left_leg.ankle_neutral = left_ankle_pos
+            
             right_leg.hip_neutral = right_hip_pos
             right_leg.knee_neutral = right_knee_pos
             right_leg.ankle_neutral = right_ankle_pos
             
-            print(f"  ✓ Right leg neutral angles updated to match current straight position")
+            print(f"\n  ✓ Saved current positions as initial desired position (neutral angles)")
+            print(f"\n  📋 Copy these values to update the code constants:")
+            print(f"    LEFT_HIP_NEUTRAL = {left_hip_pos:.1f}")
+            print(f"    LEFT_KNEE_NEUTRAL = {left_knee_pos:.1f}")
+            print(f"    LEFT_ANKLE_NEUTRAL = {left_ankle_pos:.1f}")
+            print(f"    RIGHT_HIP_NEUTRAL = {right_hip_pos:.1f}")
+            print(f"    RIGHT_KNEE_NEUTRAL = {right_knee_pos:.1f}")
+            print(f"    RIGHT_ANKLE_NEUTRAL = {right_ankle_pos:.1f}")
+            
+            # Also save to a file for easy reference
+            try:
+                with open("neutral_angles.txt", "w") as f:
+                    f.write("# Saved Neutral Angles - Initial Desired Position\n")
+                    f.write("# Copy these values to the code constants\n\n")
+                    f.write(f"LEFT_HIP_NEUTRAL = {left_hip_pos:.1f}\n")
+                    f.write(f"LEFT_KNEE_NEUTRAL = {left_knee_pos:.1f}\n")
+                    f.write(f"LEFT_ANKLE_NEUTRAL = {left_ankle_pos:.1f}\n")
+                    f.write(f"RIGHT_HIP_NEUTRAL = {right_hip_pos:.1f}\n")
+                    f.write(f"RIGHT_KNEE_NEUTRAL = {right_knee_pos:.1f}\n")
+                    f.write(f"RIGHT_ANKLE_NEUTRAL = {right_ankle_pos:.1f}\n")
+                print(f"  💾 Values also saved to 'neutral_angles.txt' file")
+            except Exception as e:
+                print(f"  ⚠️  Could not save to file: {e}")
         except Exception as e:
-            print(f"  ⚠️  Could not read right leg positions: {e}")
-            print(f"  → Using default neutral angles: HIP={RIGHT_HIP_NEUTRAL}, KNEE={RIGHT_KNEE_NEUTRAL}, ANKLE={RIGHT_ANKLE_NEUTRAL}")
+            print(f"  ⚠️  Could not read current positions: {e}")
+            print(f"  → Using default neutral angles")
         
         # Move both legs to neutral pose (using the updated neutral values)
         left_leg.go_to_neutral(duration_sec=1.0)
@@ -531,14 +575,15 @@ def main():
         left_leg._read_current_positions()
         right_leg._read_current_positions()
         
-        # Perform several steps - alternating between legs
-        num_steps = 4  # 2 steps per leg
-        print(f"\nPerforming {num_steps} steps (alternating legs)...")
+        # Perform several steps - alternating between legs for natural walking
+        # Walking pattern: Left → Right → Left → Right (like human walking)
+        num_steps = 6  # 3 steps per leg for better demonstration
+        print(f"\nPerforming {num_steps} steps (alternating legs for walking motion)...")
         print("-" * 60)
         
         for i in range(num_steps):
             if i % 2 == 0:
-                # Left leg steps
+                # Left leg steps (even steps: 0, 2, 4...)
                 print(f"\nStep {i + 1}/{num_steps} - Left Leg")
                 left_leg.step_forward_once(
                     step_height_mm=45.0,
@@ -546,14 +591,14 @@ def main():
                     step_duration_sec=1.0
                 )
             else:
-                # Right leg steps
+                # Right leg steps (odd steps: 1, 3, 5...)
                 print(f"\nStep {i + 1}/{num_steps} - Right Leg")
                 right_leg.step_forward_once(
                     step_height_mm=45.0,
                     step_length_mm=70.0,
                     step_duration_sec=1.0
                 )
-            time.sleep(0.25)  # Shorter pause between steps
+            time.sleep(0.3)  # Slight pause between steps for stability
         
         # Return both legs to neutral
         print("\nReturning both legs to neutral...")
