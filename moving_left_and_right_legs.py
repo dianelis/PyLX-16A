@@ -266,7 +266,7 @@ def main():
     # Use try/finally to ensure we always return to neutral
     try:
         # Walk forward using the coordinated keyframe sequence
-        walk_forward(steps=10, t_ms=450)
+        walk_forward(steps=10, t_ms=300)
         
         print("\n" + "=" * 60)
         print("Demo complete!")
