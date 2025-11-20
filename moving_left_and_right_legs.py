@@ -84,6 +84,8 @@ def set_pose(pose, t_ms=600):
     """
     for sid, angle in pose.items():
         try:
+            # Clamp angle to valid servo range (0-240 degrees)
+            angle = max(0.0, min(240.0, angle))
             # Use move() method with time parameter for coordinated movement
             SERVOS[sid].move(angle, time=t_ms)
         except Exception as e:
@@ -198,7 +200,7 @@ RIGHT_LEG_STEP_SEQUENCE = [
     NEUTRAL,
 ]
 
-def walk_forward(steps=6, t_ms=500):
+def walk(steps=6, t_ms=500):
     """
     Walk forward using alternating leg steps with big knee/ankle movements.
     
@@ -231,6 +233,178 @@ def walk_forward(steps=6, t_ms=500):
     print("Returning to neutral...")
     set_pose(NEUTRAL, 800)
     print("✓ Walking complete")
+
+# Alias for backward compatibility
+walk_forward = walk
+
+def dance(duration_sec=10, t_ms=400):
+    """
+    Dance with intuitive hip movements and rhythmic patterns.
+    
+    Args:
+        duration_sec: Total dance duration in seconds
+        t_ms: Time per keyframe in milliseconds
+    """
+    print("Moving to neutral position...")
+    set_pose(NEUTRAL, 800)
+    time.sleep(0.5)
+    
+    print(f"Dancing for {duration_sec} seconds...")
+    
+    # Dance sequences with hip movements
+    # Note: Hip angles are clamped to stay within 0-240 degree servo limits
+    # Sequence 1: Hip sway side to side
+    HIP_SWAY_SEQUENCE = [
+        # Sway left
+        pose_from_neutral({
+            LEFT_HIP: -10,   # Left hip moves left (reduced to stay in range)
+            RIGHT_HIP: -10,  # Right hip moves left (reduced to stay in range)
+            LEFT_KNEE: +10,  # Slight knee bend
+            RIGHT_KNEE: +10,
+            LEFT_ANKLE: 0,
+            RIGHT_ANKLE: 0,
+        }),
+        # Center
+        NEUTRAL,
+        # Sway right
+        pose_from_neutral({
+            LEFT_HIP: +10,   # Left hip moves right (reduced to stay in range)
+            RIGHT_HIP: +5,   # Right hip moves right (reduced - right hip neutral is already high at 234)
+            LEFT_KNEE: +10,
+            RIGHT_KNEE: +10,
+            LEFT_ANKLE: 0,
+            RIGHT_ANKLE: 0,
+        }),
+        # Center
+        NEUTRAL,
+    ]
+    
+    # Sequence 2: Hip circles/rotations
+    HIP_CIRCLE_SEQUENCE = [
+        # Forward tilt
+        pose_from_neutral({
+            LEFT_HIP: +5,    # Reduced to stay in range
+            RIGHT_HIP: +5,   # Reduced to stay in range
+            LEFT_KNEE: +15,
+            RIGHT_KNEE: +15,
+            LEFT_ANKLE: -5,
+            RIGHT_ANKLE: -5,
+        }),
+        # Right tilt
+        pose_from_neutral({
+            LEFT_HIP: +10,   # Reduced
+            RIGHT_HIP: -5,   # Right hip down
+            LEFT_KNEE: +10,
+            RIGHT_KNEE: +10,
+            LEFT_ANKLE: 0,
+            RIGHT_ANKLE: 0,
+        }),
+        # Back tilt
+        pose_from_neutral({
+            LEFT_HIP: -10,
+            RIGHT_HIP: -10,
+            LEFT_KNEE: +5,
+            RIGHT_KNEE: +5,
+            LEFT_ANKLE: +5,
+            RIGHT_ANKLE: +5,
+        }),
+        # Left tilt
+        pose_from_neutral({
+            LEFT_HIP: -5,    # Left hip down
+            RIGHT_HIP: +5,   # Reduced to stay in range
+            LEFT_KNEE: +10,
+            RIGHT_KNEE: +10,
+            LEFT_ANKLE: 0,
+            RIGHT_ANKLE: 0,
+        }),
+        # Center
+        NEUTRAL,
+    ]
+    
+    # Sequence 3: Alternating hip lifts with knee bends
+    HIP_LIFT_SEQUENCE = [
+        # Lift left hip
+        pose_from_neutral({
+            LEFT_HIP: +15,   # Left hip up (reduced)
+            RIGHT_HIP: -10,  # Right hip down
+            LEFT_KNEE: +30,  # Left knee bends
+            RIGHT_KNEE: +5,  # Right knee straightens
+            LEFT_ANKLE: -15,
+            RIGHT_ANKLE: 0,
+        }),
+        # Center
+        NEUTRAL,
+        # Lift right hip
+        pose_from_neutral({
+            LEFT_HIP: -10,   # Left hip down
+            RIGHT_HIP: +5,   # Right hip up (reduced - right hip neutral is already high)
+            LEFT_KNEE: +5,   # Left knee straightens
+            RIGHT_KNEE: +30, # Right knee bends
+            LEFT_ANKLE: 0,
+            RIGHT_ANKLE: -15,
+        }),
+        # Center
+        NEUTRAL,
+    ]
+    
+    # Sequence 4: Deep hip movements with ankle coordination
+    DEEP_HIP_SEQUENCE = [
+        # Deep left
+        pose_from_neutral({
+            LEFT_HIP: -20,   # Reduced to stay in range
+            RIGHT_HIP: -10,
+            LEFT_KNEE: +20,
+            RIGHT_KNEE: +15,
+            LEFT_ANKLE: -10,
+            RIGHT_ANKLE: +5,
+        }),
+        # Center
+        NEUTRAL,
+        # Deep right
+        pose_from_neutral({
+            LEFT_HIP: -10,
+            RIGHT_HIP: -20,  # Reduced to stay in range
+            LEFT_KNEE: +15,
+            RIGHT_KNEE: +20,
+            LEFT_ANKLE: +5,
+            RIGHT_ANKLE: -10,
+        }),
+        # Center
+        NEUTRAL,
+    ]
+    
+    start_time = time.time()
+    sequence_count = 0
+    
+    while (time.time() - start_time) < duration_sec:
+        sequence_count += 1
+        sequence_num = sequence_count % 4
+        
+        if sequence_num == 1:
+            print(f"  Dance move: Hip Sway (sequence {sequence_count})")
+            for keyframe in HIP_SWAY_SEQUENCE:
+                set_pose(keyframe, t_ms)
+        elif sequence_num == 2:
+            print(f"  Dance move: Hip Circle (sequence {sequence_count})")
+            for keyframe in HIP_CIRCLE_SEQUENCE:
+                set_pose(keyframe, t_ms)
+        elif sequence_num == 3:
+            print(f"  Dance move: Hip Lifts (sequence {sequence_count})")
+            for keyframe in HIP_LIFT_SEQUENCE:
+                set_pose(keyframe, t_ms)
+        else:
+            print(f"  Dance move: Deep Hips (sequence {sequence_count})")
+            for keyframe in DEEP_HIP_SEQUENCE:
+                set_pose(keyframe, t_ms)
+        
+        # Check if we should continue
+        if (time.time() - start_time) >= duration_sec:
+            break
+    
+    # Return to neutral
+    print("Returning to neutral...")
+    set_pose(NEUTRAL, 800)
+    print("✓ Dancing complete")
 
 
 # ============================================================================
@@ -265,8 +439,14 @@ def main():
     
     # Use try/finally to ensure we always return to neutral
     try:
-        # Walk forward using the coordinated keyframe sequence
-        walk_forward(steps=10, t_ms=300)
+        # You can call either walk() or dance() here
+        # Uncomment the one you want to use:
+        
+        # Walk forward
+        # walk(steps=10, t_ms=300)
+        
+        # Or dance
+        dance(duration_sec=15, t_ms=400)
         
         print("\n" + "=" * 60)
         print("Demo complete!")
