@@ -1,8 +1,8 @@
-git a#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Moving Left and Right Legs - Dual Leg Stepping Control
 Controls both left and right robotic legs with LewanSoul LX-16A servos.
-Uses forward kinematics and smooth stepping motion with separate neutral angles for each leg.
+Uses coordinated pose-based keyframes for smooth bipedal walking.
 """
 
 from pylx16a.lx16a import *
@@ -14,7 +14,8 @@ import math
 # ============================================================================
 
 # Serial port configuration
-SERIAL_PORT = "/dev/tty.usbserial-210"  # Change to your port (e.g., "/dev/tty.usbserial-210" on Mac)
+PORT = "/dev/tty.usbserial-210"  # Change to your port (e.g., "/dev/tty.usbserial-210" on Mac)
+SERIAL_PORT = PORT  # Alias for compatibility
 BAUD_RATE = 0.1  # Timeout in seconds
 
 # Servo IDs - Left Leg (from our view, left to right, bottom to top)
@@ -27,422 +28,207 @@ RIGHT_ANKLE = 30  # Bottom
 RIGHT_KNEE = 60   # Middle
 RIGHT_HIP = 50    # Top
 
-# Neutral standing pose angles (degrees) - Separate for each leg
-# Left Leg neutral angles (saved from current position)
-LEFT_HIP_NEUTRAL = 215.3
-LEFT_KNEE_NEUTRAL = 123.6
-LEFT_ANKLE_NEUTRAL = 123.1
+# Neutral standing pose angles (degrees) - Saved from current position
+# These are the actual angles where the robot stands straight
+NEUTRAL = {
+    LEFT_HIP:   215.3,
+    LEFT_KNEE:  123.6,
+    LEFT_ANKLE: 123.1,
+    RIGHT_HIP:   234.0,
+    RIGHT_KNEE:  107.3,
+    RIGHT_ANKLE: 177.4,
+}
 
-# Right Leg neutral angles (saved from current position)
-RIGHT_HIP_NEUTRAL = 234.0
-RIGHT_KNEE_NEUTRAL = 107.3
-RIGHT_ANKLE_NEUTRAL = 177.4
-
-# Legacy variables for backward compatibility (will use left leg values)
+# Legacy variables for backward compatibility
+LEFT_HIP_NEUTRAL = NEUTRAL[LEFT_HIP]
+LEFT_KNEE_NEUTRAL = NEUTRAL[LEFT_KNEE]
+LEFT_ANKLE_NEUTRAL = NEUTRAL[LEFT_ANKLE]
+RIGHT_HIP_NEUTRAL = NEUTRAL[RIGHT_HIP]
+RIGHT_KNEE_NEUTRAL = NEUTRAL[RIGHT_KNEE]
+RIGHT_ANKLE_NEUTRAL = NEUTRAL[RIGHT_ANKLE]
 HIP_NEUTRAL = LEFT_HIP_NEUTRAL
 KNEE_NEUTRAL = LEFT_KNEE_NEUTRAL
 ANKLE_NEUTRAL = LEFT_ANKLE_NEUTRAL
 
-# Hip orientation offset (degrees) - compensates for sideways mounting
-HIP_OFFSET = 0.0  # Adjust if hip rotation direction is inverted
-
-# Segment lengths (mm)
-L1_HIP_TO_KNEE = 70.0
-L2_KNEE_TO_ANKLE = 70.0
-L3_ANKLE_TO_FOOT = 30.0
-
-# Joint limits relative to neutral (degrees)
-HIP_LIMIT_MIN = -35.0  # hip_neutral - 35 (slightly wider for natural swing)
-HIP_LIMIT_MAX = 35.0   # hip_neutral + 35
-KNEE_LIMIT_MIN = -60.0  # knee_neutral - 60 (increased for big angle swing)
-KNEE_LIMIT_MAX = 60.0   # knee_neutral + 60 (increased for big angle swing)
-ANKLE_LIMIT_MIN = -50.0  # ankle_neutral - 50 (increased for bigger angle swing)
-ANKLE_LIMIT_MAX = 50.0   # ankle_neutral + 50 (increased for bigger angle swing)
-
-# Default stepping parameters
-DEFAULT_STEP_HEIGHT_MM = 45.0  # Increased for larger steps
-DEFAULT_STEP_LENGTH_MM = 70.0  # Increased for larger steps
-DEFAULT_STEP_DURATION_SEC = 1.0  # Twice as fast (was 2.0)
-
 # ============================================================================
-# HELPER FUNCTIONS
+# INITIALIZE SERVOS
 # ============================================================================
 
-def clamp_angle(angle, min_angle, max_angle):
-    """Clamp an angle to be within specified limits."""
-    return max(min_angle, min(max_angle, angle))
+# Initialize bus and servo objects
+SERVOS = {}
 
+def initialize_servos():
+    """Initialize all servo objects."""
+    global SERVOS
+    SERVOS = {
+        LEFT_ANKLE: LX16A(LEFT_ANKLE),
+        LEFT_KNEE:  LX16A(LEFT_KNEE),
+        LEFT_HIP:   LX16A(LEFT_HIP),
+        RIGHT_ANKLE: LX16A(RIGHT_ANKLE),
+        RIGHT_KNEE:  LX16A(RIGHT_KNEE),
+        RIGHT_HIP:   LX16A(RIGHT_HIP),
+    }
+    print("✓ All servos initialized")
 
-def cosine_ease(t):
+# ============================================================================
+# POSE FUNCTIONS
+# ============================================================================
+
+def set_pose(pose, t_ms=600):
     """
-    Cosine easing function for smooth interpolation.
-    Provides smooth acceleration and deceleration.
+    Move all servos to specified pose simultaneously.
     
     Args:
-        t: Interpolation parameter from 0.0 to 1.0
+        pose: dict {servo_id: angle_deg}
+        t_ms: move time in milliseconds
+    """
+    for sid, angle in pose.items():
+        try:
+            # Use move() method with time parameter for coordinated movement
+            SERVOS[sid].move(angle, time=t_ms)
+        except Exception as e:
+            print(f"Warning: Could not move servo {sid}: {e}")
+    # Give it time to reach the target
+    time.sleep(t_ms / 1000.0 + 0.05)
+
+def pose_from_neutral(deltas_dict=None, **deltas):
+    """
+    Create a pose as "neutral plus small deltas".
+    
+    Args:
+        deltas_dict: Dictionary with servo_id: delta_angle pairs (can pass as dict)
+        **deltas: Keyword arguments with servo_id: delta_angle pairs (alternative)
     
     Returns:
-        Eased value from 0.0 to 1.0 with smooth cosine curve
+        dict: Complete pose with all servos at neutral + deltas
     """
-    return 0.5 * (1.0 - math.cos(math.pi * t))
+    pose = dict(NEUTRAL)
+    # Handle both dict argument and keyword arguments
+    if deltas_dict is not None:
+        for sid, delta in deltas_dict.items():
+            if sid in pose:
+                pose[sid] = NEUTRAL[sid] + delta
+    else:
+        for sid, delta in deltas.items():
+            if sid in pose:
+                pose[sid] = NEUTRAL[sid] + delta
+    return pose
 
+# ============================================================================
+# WALKING SEQUENCE
+# ============================================================================
 
-def set_servo_angle(servo_id, angle_deg, speed=None):
+# Left leg step sequence - Big knee and ankle movements, minimal hip
+LEFT_LEG_STEP_SEQUENCE = [
+    # 1) Lift left leg: Bend knee and flex ankle to clear ground
+    pose_from_neutral({
+        LEFT_HIP: 0,      # Hip stays neutral
+        LEFT_KNEE: +50,   # Big knee bend to lift leg
+        LEFT_ANKLE: -40,  # Ankle flexes up to clear ground
+        # Right leg stays in neutral (supporting leg)
+        RIGHT_HIP: 0,
+        RIGHT_KNEE: 0,
+        RIGHT_ANKLE: 0,
+    }),
+    
+    # 2) Swing left leg forward: Extend knee and ankle forward
+    pose_from_neutral({
+        LEFT_HIP: 0,      # Hip stays neutral
+        LEFT_KNEE: +30,   # Partially extend knee for forward swing
+        LEFT_ANKLE: -20,  # Ankle extends forward
+        # Right leg stays in neutral
+        RIGHT_HIP: 0,
+        RIGHT_KNEE: 0,
+        RIGHT_ANKLE: 0,
+    }),
+    
+    # 3) Place left foot down: Extend knee and ankle to contact ground
+    pose_from_neutral({
+        LEFT_HIP: 0,      # Hip stays neutral
+        LEFT_KNEE: +10,   # Slight knee bend for landing
+        LEFT_ANKLE: 0,    # Ankle neutral for ground contact
+        # Right leg stays in neutral
+        RIGHT_HIP: 0,
+        RIGHT_KNEE: 0,
+        RIGHT_ANKLE: 0,
+    }),
+    
+    # 4) Return to neutral
+    NEUTRAL,
+]
+
+# Right leg step sequence - Big knee and ankle movements, minimal hip
+RIGHT_LEG_STEP_SEQUENCE = [
+    # 1) Lift right leg: Bend knee and flex ankle to clear ground
+    pose_from_neutral({
+        # Left leg stays in neutral (supporting leg)
+        LEFT_HIP: 0,
+        LEFT_KNEE: 0,
+        LEFT_ANKLE: 0,
+        RIGHT_HIP: 0,     # Hip stays neutral
+        RIGHT_KNEE: +50,  # Big knee bend to lift leg
+        RIGHT_ANKLE: -40, # Ankle flexes up to clear ground
+    }),
+    
+    # 2) Swing right leg forward: Extend knee and ankle forward
+    pose_from_neutral({
+        # Left leg stays in neutral
+        LEFT_HIP: 0,
+        LEFT_KNEE: 0,
+        LEFT_ANKLE: 0,
+        RIGHT_HIP: 0,     # Hip stays neutral
+        RIGHT_KNEE: +30,  # Partially extend knee for forward swing
+        RIGHT_ANKLE: -20, # Ankle extends forward
+    }),
+    
+    # 3) Place right foot down: Extend knee and ankle to contact ground
+    pose_from_neutral({
+        # Left leg stays in neutral
+        LEFT_HIP: 0,
+        LEFT_KNEE: 0,
+        LEFT_ANKLE: 0,
+        RIGHT_HIP: 0,     # Hip stays neutral
+        RIGHT_KNEE: +10, # Slight knee bend for landing
+        RIGHT_ANKLE: 0,  # Ankle neutral for ground contact
+    }),
+    
+    # 4) Return to neutral
+    NEUTRAL,
+]
+
+def walk_forward(steps=6, t_ms=500):
     """
-    Set a servo to a specific angle.
+    Walk forward using alternating leg steps with big knee/ankle movements.
     
     Args:
-        servo_id: The servo ID (10, 20, or 30)
-        angle_deg: Target angle in degrees (0-240)
-        speed: Optional movement speed (not used in LX-16A, but kept for API consistency)
+        steps: Total number of steps (will alternate between legs)
+        t_ms: Time per keyframe in milliseconds
     """
-    try:
-        servo = LX16A(servo_id)
-        # Clamp to valid servo range
-        angle_deg = max(0.0, min(240.0, angle_deg))
-        servo.move(angle_deg)
-        return True
-    except ServoTimeoutError:
-        print(f"Warning: Servo {servo_id} not responding")
-        return False
-    except Exception as e:
-        print(f"Error setting servo {servo_id}: {e}")
-        return False
-
-
-def move_to_pose(hip_id, knee_id, ankle_id, hip_angle, knee_angle, ankle_angle, duration_sec=1.0, 
-                 hip_neutral=None, knee_neutral=None, ankle_neutral=None):
-    """
-    Move all three servos to specified angles simultaneously.
+    # Go to neutral first
+    print("Moving to neutral position...")
+    set_pose(NEUTRAL, 800)
+    time.sleep(0.5)
     
-    Args:
-        hip_id: Hip servo ID
-        knee_id: Knee servo ID
-        ankle_id: Ankle servo ID
-        hip_angle: Hip angle in degrees (relative to neutral)
-        knee_angle: Knee angle in degrees (relative to neutral)
-        ankle_angle: Ankle angle in degrees (relative to neutral)
-        duration_sec: Time to complete the movement
-        hip_neutral: Neutral angle for hip (defaults to HIP_NEUTRAL)
-        knee_neutral: Neutral angle for knee (defaults to KNEE_NEUTRAL)
-        ankle_neutral: Neutral angle for ankle (defaults to ANKLE_NEUTRAL)
-    """
-    # Use provided neutral angles or defaults
-    if hip_neutral is None:
-        hip_neutral = HIP_NEUTRAL
-    if knee_neutral is None:
-        knee_neutral = KNEE_NEUTRAL
-    if ankle_neutral is None:
-        ankle_neutral = ANKLE_NEUTRAL
-    
-    # Apply neutral offsets and hip offset
-    hip_actual = hip_neutral + hip_angle + HIP_OFFSET
-    knee_actual = knee_neutral + knee_angle
-    ankle_actual = ankle_neutral + ankle_angle
-    
-    # Apply joint limits (using the provided neutral angles)
-    hip_actual = clamp_angle(hip_actual, 
-                            hip_neutral + HIP_LIMIT_MIN, 
-                            hip_neutral + HIP_LIMIT_MAX)
-    knee_actual = clamp_angle(knee_actual, 
-                              knee_neutral + KNEE_LIMIT_MIN, 
-                              knee_neutral + KNEE_LIMIT_MAX)
-    ankle_actual = clamp_angle(ankle_actual, 
-                              ankle_neutral + ANKLE_LIMIT_MIN, 
-                              ankle_neutral + ANKLE_LIMIT_MAX)
-    
-    # Move servos
-    set_servo_angle(hip_id, hip_actual)
-    set_servo_angle(knee_id, knee_actual)
-    set_servo_angle(ankle_id, ankle_actual)
-    
-    # Wait for movement to complete
-    time.sleep(duration_sec)
-
-
-# ============================================================================
-# FORWARD KINEMATICS
-# ============================================================================
-
-def forward_kinematics(hip_angle_deg, knee_angle_deg, ankle_angle_deg):
-    """
-    Compute foot position (x, z) relative to hip using forward kinematics.
-    
-    Args:
-        hip_angle_deg: Hip angle in degrees (relative to vertical, positive = forward)
-        knee_angle_deg: Knee angle in degrees (relative to straight, positive = bent)
-        ankle_angle_deg: Ankle angle in degrees (relative to straight, positive = flexed)
-    
-    Returns:
-        (x, z) tuple: Foot position relative to hip in mm
-            x: Forward distance (positive = forward)
-            z: Vertical distance (positive = down)
-    """
-    # Convert to radians
-    hip_rad = math.radians(hip_angle_deg)
-    knee_rad = math.radians(knee_angle_deg)
-    ankle_rad = math.radians(ankle_angle_deg)
-    
-    # Compute joint positions
-    # Hip is at origin (0, 0)
-    # Knee position relative to hip
-    knee_x = L1_HIP_TO_KNEE * math.sin(hip_rad)
-    knee_z = L1_HIP_TO_KNEE * math.cos(hip_rad)
-    
-    # Ankle position relative to knee
-    # Total angle from vertical at knee = hip_angle + knee_angle
-    ankle_angle_from_vertical = hip_rad + knee_rad
-    ankle_x = knee_x + L2_KNEE_TO_ANKLE * math.sin(ankle_angle_from_vertical)
-    ankle_z = knee_z + L2_KNEE_TO_ANKLE * math.cos(ankle_angle_from_vertical)
-    
-    # Foot position relative to ankle
-    # Total angle from vertical at ankle = hip_angle + knee_angle + ankle_angle
-    foot_angle_from_vertical = ankle_angle_from_vertical + ankle_rad
-    foot_x = ankle_x + L3_ANKLE_TO_FOOT * math.sin(foot_angle_from_vertical)
-    foot_z = ankle_z + L3_ANKLE_TO_FOOT * math.cos(foot_angle_from_vertical)
-    
-    return (foot_x, foot_z)
-
-
-# ============================================================================
-# LEFT LEG CLASS
-# ============================================================================
-
-class Leg:
-    """Controls a 3-servo robotic leg with forward kinematics and stepping."""
-    
-    def __init__(self, hip_id, knee_id, ankle_id, leg_name="Leg", hip_neutral=None, knee_neutral=None, ankle_neutral=None):
-        """Initialize the leg and connect to servos.
-        
-        Args:
-            hip_id: Hip servo ID
-            knee_id: Knee servo ID
-            ankle_id: Ankle servo ID
-            leg_name: Name of the leg (e.g., "Left Leg" or "Right Leg")
-            hip_neutral: Neutral angle for hip (defaults to LEFT_HIP_NEUTRAL or RIGHT_HIP_NEUTRAL based on leg)
-            knee_neutral: Neutral angle for knee (defaults to LEFT_KNEE_NEUTRAL or RIGHT_KNEE_NEUTRAL based on leg)
-            ankle_neutral: Neutral angle for ankle (defaults to LEFT_ANKLE_NEUTRAL or RIGHT_ANKLE_NEUTRAL based on leg)
-        """
-        self.hip_id = hip_id
-        self.knee_id = knee_id
-        self.ankle_id = ankle_id
-        self.leg_name = leg_name
-        
-        # Set neutral angles based on leg type or use provided values
-        if hip_neutral is None:
-            self.hip_neutral = RIGHT_HIP_NEUTRAL if "Right" in leg_name else LEFT_HIP_NEUTRAL
+    print(f"Walking {steps} steps (alternating legs)...")
+    for step_num in range(steps):
+        # Alternate between left and right legs
+        if step_num % 2 == 0:
+            # Left leg step
+            leg_name = "Left"
+            sequence = LEFT_LEG_STEP_SEQUENCE
         else:
-            self.hip_neutral = hip_neutral
-            
-        if knee_neutral is None:
-            self.knee_neutral = RIGHT_KNEE_NEUTRAL if "Right" in leg_name else LEFT_KNEE_NEUTRAL
-        else:
-            self.knee_neutral = knee_neutral
-            
-        if ankle_neutral is None:
-            self.ankle_neutral = RIGHT_ANKLE_NEUTRAL if "Right" in leg_name else LEFT_ANKLE_NEUTRAL
-        else:
-            self.ankle_neutral = ankle_neutral
+            # Right leg step
+            leg_name = "Right"
+            sequence = RIGHT_LEG_STEP_SEQUENCE
         
-        self.hip_servo = None
-        self.knee_servo = None
-        self.ankle_servo = None
-        self._initialize_servos()
+        print(f"  Step {step_num + 1}/{steps} - {leg_name} Leg")
+        for keyframe_num, keyframe in enumerate(sequence):
+            set_pose(keyframe, t_ms)
     
-    def _initialize_servos(self):
-        """Initialize servo connections and set angle limits."""
-        try:
-            # Initialize knee and ankle (required)
-            self.knee_servo = LX16A(self.knee_id)
-            self.ankle_servo = LX16A(self.ankle_id)
-            
-            # Set angle limits for knee and ankle
-            self.knee_servo.set_angle_limits(0, 240)
-            self.ankle_servo.set_angle_limits(0, 240)
-            
-            # Try to initialize hip (optional - may be disabled)
-            try:
-                self.hip_servo = LX16A(self.hip_id)
-                self.hip_servo.set_angle_limits(0, 240)
-                print(f"✓ {self.leg_name} servos initialized (hip, knee, ankle)")
-            except ServoTimeoutError:
-                self.hip_servo = None
-                print(f"✓ {self.leg_name} knee and ankle initialized (hip not responding - will stay neutral)")
-            
-            # Read current servo positions to use as neutral
-            self._read_current_positions()
-            
-            return True
-        except ServoTimeoutError as e:
-            print(f"❌ {self.leg_name} required servo {e.id_} not responding. Check connections.")
-            return False
-        except Exception as e:
-            print(f"❌ Error initializing {self.leg_name} servos: {e}")
-            return False
-    
-    def _read_current_positions(self):
-        """Read current servo positions and display them."""
-        print(f"\n📊 {self.leg_name} Current Servo Positions:")
-        try:
-            if self.knee_servo is not None:
-                knee_pos = self.knee_servo.get_physical_angle()
-                print(f"  Servo {self.knee_id} (Knee): {knee_pos:.2f}°")
-            if self.ankle_servo is not None:
-                ankle_pos = self.ankle_servo.get_physical_angle()
-                print(f"  Servo {self.ankle_id} (Ankle): {ankle_pos:.2f}°")
-            if self.hip_servo is not None:
-                hip_pos = self.hip_servo.get_physical_angle()
-                print(f"  Servo {self.hip_id} (Hip): {hip_pos:.2f}°")
-        except Exception as e:
-            print(f"  ⚠️  Could not read current positions: {e}")
-    
-    def go_to_neutral(self, duration_sec=1.0):
-        """
-        Move leg to neutral standing pose (true vertical 90-degree position).
-        
-        Args:
-            duration_sec: Time to complete the movement
-        """
-        print(f"Moving {self.leg_name} to neutral pose...")
-        # Ensure all joints are at exactly 0.0 relative to neutral
-        move_to_pose(self.hip_id, self.knee_id, self.ankle_id, 0.0, 0.0, 0.0, duration_sec,
-                     self.hip_neutral, self.knee_neutral, self.ankle_neutral)
-        # Double-check by directly setting servos to neutral angles for precision
-        time.sleep(0.1)  # Small delay to ensure previous command completes
-        try:
-            if self.knee_servo is not None:
-                self.knee_servo.move(self.knee_neutral)
-            if self.ankle_servo is not None:
-                self.ankle_servo.move(self.ankle_neutral)
-            if self.hip_servo is not None:
-                self.hip_servo.move(self.hip_neutral)
-        except:
-            pass
-        print(f"✓ {self.leg_name} neutral pose reached (vertical standing position)")
-    
-    def step_forward_once(self, step_height_mm=DEFAULT_STEP_HEIGHT_MM, 
-                         step_length_mm=DEFAULT_STEP_LENGTH_MM, 
-                         step_duration_sec=DEFAULT_STEP_DURATION_SEC):
-        """
-        Execute a single stepping motion with sequential forward swings.
-        
-        The step consists of 3 phases:
-        1. Knee Forward Swing: Servo 10 (knee) moves first with big swing forward
-        2. Ankle Forward Swing: Servo 20 (ankle) swings forward right after knee
-        3. Return to Neutral: All servos return to straight 90-degree position
-        
-        Motion pattern:
-        - Hip servo: Does not move (stays at neutral)
-        - Knee servo: First big swing forward (50° relative)
-        - Ankle servo: Right after knee, big swing forward (45° relative)
-        - Then all servos return to neutral (straight 90° position)
-        
-        Args:
-            step_height_mm: Not used - kept for API compatibility
-            step_length_mm: Not used - kept for API compatibility
-            step_duration_sec: Total duration of the step (seconds)
-        """
-        print(f"Stepping with sequential forward swings...")
-        
-        # Increased number of interpolation steps for smooth motion
-        num_steps = 100
-        dt = step_duration_sec / num_steps
-        
-        # Motion pattern for bipedal walking:
-        # 1. Hip servo - stays at neutral (does not move)
-        # 2. Knee servo - first moves with big swing forward
-        # 3. Ankle servo - right after knee, also big swing forward
-        # 4. Then all servos return to straight 90 degree angle (neutral position)
-        
-        # Phase 1: Knee swings forward first (big angle swing)
-        # This lifts the leg and prepares for forward motion
-        knee_forward_angle = 50.0  # Big swing forward (relative to neutral)
-        
-        # Phase 2: Ankle swings forward right after knee (big angle swing)
-        # This extends the foot forward for the step
-        ankle_forward_angle = 45.0  # Big swing forward (relative to neutral)
-        
-        # Phase 3: Return to neutral (straight 90-degree position)
-        # All servos return to exactly 0.0 relative (which is 135° absolute = 90° physical)
-        # Ensure we explicitly set to neutral angles
-        
-        # Define keyframes following the motion pattern
-        # Format: (hip_angle, knee_angle, ankle_angle, phase_name, segment_weight)
-        # Hip (servo 30) stays at 0.0 (neutral) throughout
-        keyframes = [
-            # Start from neutral (straight 90-degree position)
-            (0.0, 0.0, 0.0, "Neutral Start", 0.10),  # 10% of steps
-            
-            # Phase 1: Knee (servo 10) swings forward first (big swing)
-            (0.0, knee_forward_angle, 0.0, "Knee Forward Swing", 0.30),  # 30% of steps
-            
-            # Phase 2: Ankle (servo 20) swings forward right after knee (big swing)
-            (0.0, knee_forward_angle, ankle_forward_angle, "Ankle Forward Swing", 0.30),  # 30% of steps
-            
-            # Phase 3: Return to neutral (straight 90-degree position)
-            # Explicitly set all to 0.0 to ensure straight position
-            (0.0, 0.0, 0.0, "Return to Neutral", 0.30),  # 30% of steps
-        ]
-        
-        # After interpolation, explicitly set servos to exact neutral position
-        # This ensures the leg is truly straight
-        
-        # Calculate step distribution for each segment (between keyframes)
-        # Use the weight of the destination keyframe for each segment
-        segment_weights = [keyframes[i+1][4] for i in range(len(keyframes) - 1)]
-        total_weight = sum(segment_weights)
-        segment_steps_list = [int(num_steps * weight / total_weight) for weight in segment_weights]
-        
-        # Adjust to ensure total steps match (handle rounding)
-        current_total = sum(segment_steps_list)
-        if current_total < num_steps:
-            segment_steps_list[-1] += (num_steps - current_total)
-        elif current_total > num_steps:
-            segment_steps_list[-1] -= (current_total - num_steps)
-        
-        # Interpolate between keyframes with cosine easing
-        for i in range(len(keyframes) - 1):
-            start_frame = keyframes[i]
-            end_frame = keyframes[i + 1]
-            
-            # Number of steps for this segment
-            segment_steps = segment_steps_list[i]
-            
-            for j in range(segment_steps):
-                # Linear interpolation parameter (0.0 to 1.0)
-                t_linear = j / segment_steps if segment_steps > 0 else 0.0
-                
-                # Apply cosine easing for smooth acceleration/deceleration
-                t_eased = cosine_ease(t_linear)
-                
-                # Interpolate angles with eased parameter
-                hip_angle = start_frame[0] + (end_frame[0] - start_frame[0]) * t_eased
-                knee_angle = start_frame[1] + (end_frame[1] - start_frame[1]) * t_eased
-                ankle_angle = start_frame[2] + (end_frame[2] - start_frame[2]) * t_eased
-                
-                # Move to interpolated pose (using this leg's neutral angles)
-                move_to_pose(self.hip_id, self.knee_id, self.ankle_id, hip_angle, knee_angle, ankle_angle, dt,
-                             self.hip_neutral, self.knee_neutral, self.ankle_neutral)
-                
-                # Print phase name at start of segment
-                if j == 0:
-                    print(f"  → {end_frame[3]}")
-        
-        # After all interpolation, explicitly set all servos to exact neutral position
-        # This ensures the leg returns to a perfectly straight 90-degree position
-        time.sleep(0.1)  # Small delay to ensure previous commands complete
-        try:
-            if self.knee_servo is not None:
-                self.knee_servo.move(self.knee_neutral)
-            if self.ankle_servo is not None:
-                self.ankle_servo.move(self.ankle_neutral)
-            if self.hip_servo is not None:
-                self.hip_servo.move(self.hip_neutral)
-            time.sleep(0.2)  # Allow servos to settle into position
-        except Exception as e:
-            print(f"Warning: Could not set final neutral position: {e}")
-        
-        print(f"✓ {self.leg_name} step complete - leg returned to straight position")
+    # Return to neutral
+    print("Returning to neutral...")
+    set_pose(NEUTRAL, 800)
+    print("✓ Walking complete")
 
 
 # ============================================================================
@@ -450,206 +236,49 @@ class Leg:
 # ============================================================================
 
 def main():
-    """Main function to run the stepping demonstration."""
+    """Main function to run the walking demonstration."""
     print("=" * 60)
-    print("Dual Leg Stepping Control")
+    print("Dual Leg Walking Control - Pose-Based Keyframes")
     print("=" * 60)
     
     # Initialize serial connection
     try:
-        print(f"Connecting to {SERIAL_PORT}...")
-        LX16A.initialize(SERIAL_PORT, BAUD_RATE)
+        print(f"Connecting to {PORT}...")
+        LX16A.initialize(PORT, BAUD_RATE)
         print("✓ Connected to servo bus")
     except Exception as e:
         print(f"❌ Failed to connect: {e}")
         print("Check:")
-        print(f"  - Serial port: {SERIAL_PORT}")
+        print(f"  - Serial port: {PORT}")
         print("  - USB connection")
         print("  - Servo power supply")
         return
     
+    # Initialize all servos
+    try:
+        initialize_servos()
+    except Exception as e:
+        print(f"❌ Failed to initialize servos: {e}")
+        return
+    
     # Use try/finally to ensure we always return to neutral
     try:
-        # Create leg controllers for both legs
-        left_leg = Leg(LEFT_HIP, LEFT_KNEE, LEFT_ANKLE, "Left Leg")
-        right_leg = Leg(RIGHT_HIP, RIGHT_KNEE, RIGHT_ANKLE, "Right Leg")
-        
-        # Check that required servos (knee and ankle) are initialized for both legs
-        if left_leg.knee_servo is None or left_leg.ankle_servo is None:
-            print("❌ Failed to initialize left leg servos (knee and ankle). Exiting.")
-            return
-        if right_leg.knee_servo is None or right_leg.ankle_servo is None:
-            print("❌ Failed to initialize right leg servos (knee and ankle). Exiting.")
-            return
-        
-        if left_leg.hip_servo is None:
-            print("ℹ️  Left leg hip servo not available - will use knee and ankle only")
-        if right_leg.hip_servo is None:
-            print("ℹ️  Right leg hip servo not available - will use knee and ankle only")
-        
-        # Read and display current servo positions first
-        print("\n📊 Reading current servo positions...")
-        left_leg._read_current_positions()
-        right_leg._read_current_positions()
-        
-        # Read both legs' current positions to use as neutral (initial desired position)
-        print("\n📐 Reading current positions to save as initial desired position...")
-        # Declare global at the start
-        global LEFT_HIP_NEUTRAL, LEFT_KNEE_NEUTRAL, LEFT_ANKLE_NEUTRAL
-        global RIGHT_HIP_NEUTRAL, RIGHT_KNEE_NEUTRAL, RIGHT_ANKLE_NEUTRAL
-        
-        try:
-            # Read left leg current positions
-            left_hip_pos = left_leg.hip_servo.get_physical_angle() if left_leg.hip_servo is not None else LEFT_HIP_NEUTRAL
-            left_knee_pos = left_leg.knee_servo.get_physical_angle() if left_leg.knee_servo is not None else LEFT_KNEE_NEUTRAL
-            left_ankle_pos = left_leg.ankle_servo.get_physical_angle() if left_leg.ankle_servo is not None else LEFT_ANKLE_NEUTRAL
-            
-            # Read right leg current positions
-            right_hip_pos = right_leg.hip_servo.get_physical_angle() if right_leg.hip_servo is not None else RIGHT_HIP_NEUTRAL
-            right_knee_pos = right_leg.knee_servo.get_physical_angle() if right_leg.knee_servo is not None else RIGHT_KNEE_NEUTRAL
-            right_ankle_pos = right_leg.ankle_servo.get_physical_angle() if right_leg.ankle_servo is not None else RIGHT_ANKLE_NEUTRAL
-            
-            print(f"  Left Leg Current Position (saving as neutral):")
-            print(f"    Hip (ID {LEFT_HIP}): {left_hip_pos:.2f}°")
-            print(f"    Knee (ID {LEFT_KNEE}): {left_knee_pos:.2f}°")
-            print(f"    Ankle (ID {LEFT_ANKLE}): {left_ankle_pos:.2f}°")
-            
-            print(f"\n  Right Leg Current Position (saving as neutral):")
-            print(f"    Hip (ID {RIGHT_HIP}): {right_hip_pos:.2f}°")
-            print(f"    Knee (ID {RIGHT_KNEE}): {right_knee_pos:.2f}°")
-            print(f"    Ankle (ID {RIGHT_ANKLE}): {right_ankle_pos:.2f}°")
-            
-            # Update left leg neutral values
-            LEFT_HIP_NEUTRAL = left_hip_pos
-            LEFT_KNEE_NEUTRAL = left_knee_pos
-            LEFT_ANKLE_NEUTRAL = left_ankle_pos
-            
-            # Update right leg neutral values
-            RIGHT_HIP_NEUTRAL = right_hip_pos
-            RIGHT_KNEE_NEUTRAL = right_knee_pos
-            RIGHT_ANKLE_NEUTRAL = right_ankle_pos
-            
-            # Update both leg objects' neutral angles
-            left_leg.hip_neutral = left_hip_pos
-            left_leg.knee_neutral = left_knee_pos
-            left_leg.ankle_neutral = left_ankle_pos
-            
-            right_leg.hip_neutral = right_hip_pos
-            right_leg.knee_neutral = right_knee_pos
-            right_leg.ankle_neutral = right_ankle_pos
-            
-            print(f"\n  ✓ Saved current positions as initial desired position (neutral angles)")
-            print(f"\n  📋 Copy these values to update the code constants:")
-            print(f"    LEFT_HIP_NEUTRAL = {left_hip_pos:.1f}")
-            print(f"    LEFT_KNEE_NEUTRAL = {left_knee_pos:.1f}")
-            print(f"    LEFT_ANKLE_NEUTRAL = {left_ankle_pos:.1f}")
-            print(f"    RIGHT_HIP_NEUTRAL = {right_hip_pos:.1f}")
-            print(f"    RIGHT_KNEE_NEUTRAL = {right_knee_pos:.1f}")
-            print(f"    RIGHT_ANKLE_NEUTRAL = {right_ankle_pos:.1f}")
-            
-            # Also save to a file for easy reference
-            try:
-                with open("neutral_angles.txt", "w") as f:
-                    f.write("# Saved Neutral Angles - Initial Desired Position\n")
-                    f.write("# Copy these values to the code constants\n\n")
-                    f.write(f"LEFT_HIP_NEUTRAL = {left_hip_pos:.1f}\n")
-                    f.write(f"LEFT_KNEE_NEUTRAL = {left_knee_pos:.1f}\n")
-                    f.write(f"LEFT_ANKLE_NEUTRAL = {left_ankle_pos:.1f}\n")
-                    f.write(f"RIGHT_HIP_NEUTRAL = {right_hip_pos:.1f}\n")
-                    f.write(f"RIGHT_KNEE_NEUTRAL = {right_knee_pos:.1f}\n")
-                    f.write(f"RIGHT_ANKLE_NEUTRAL = {right_ankle_pos:.1f}\n")
-                print(f"  💾 Values also saved to 'neutral_angles.txt' file")
-            except Exception as e:
-                print(f"  ⚠️  Could not save to file: {e}")
-        except Exception as e:
-            print(f"  ⚠️  Could not read current positions: {e}")
-            print(f"  → Using default neutral angles")
-        
-        # Move both legs to neutral pose (using the updated neutral values)
-        left_leg.go_to_neutral(duration_sec=1.0)
-        right_leg.go_to_neutral(duration_sec=1.0)
-        time.sleep(0.5)  # Shorter pause
-        
-        # Read positions again after moving to neutral
-        print("\n📊 Servo positions after moving to neutral:")
-        left_leg._read_current_positions()
-        right_leg._read_current_positions()
-        
-        # Perform several steps - alternating between legs for natural walking
-        # Walking pattern: Left → Right → Left → Right (like human walking)
-        num_steps = 6  # 3 steps per leg for better demonstration
-        print(f"\nPerforming {num_steps} steps (alternating legs for walking motion)...")
-        print("-" * 60)
-        
-        for i in range(num_steps):
-            if i % 2 == 0:
-                # Left leg steps (even steps: 0, 2, 4...)
-                print(f"\nStep {i + 1}/{num_steps} - Left Leg")
-                left_leg.step_forward_once(
-                    step_height_mm=45.0,
-                    step_length_mm=70.0,
-                    step_duration_sec=1.0
-                )
-            else:
-                # Right leg steps (odd steps: 1, 3, 5...)
-                print(f"\nStep {i + 1}/{num_steps} - Right Leg")
-                right_leg.step_forward_once(
-                    step_height_mm=45.0,
-                    step_length_mm=70.0,
-                    step_duration_sec=1.0
-                )
-            time.sleep(0.3)  # Slight pause between steps for stability
-        
-        # Return both legs to neutral
-        print("\nReturning both legs to neutral...")
-        left_leg.go_to_neutral(duration_sec=1.0)
-        right_leg.go_to_neutral(duration_sec=1.0)
+        # Walk forward using the coordinated keyframe sequence
+        walk_forward(steps=5, t_ms=450)
         
         print("\n" + "=" * 60)
         print("Demo complete!")
         print("=" * 60)
     
     finally:
-        # Always return both legs to neutral standing position (true vertical)
-        print("\n🔄 Returning both legs to neutral standing position (vertical)...")
+        # Always return to neutral standing position
+        print("\n🔄 Returning to neutral standing position...")
         try:
-            # Try to return both legs to neutral
-            try:
-                left_leg.go_to_neutral(duration_sec=1.5)
-            except:
-                pass
-            try:
-                right_leg.go_to_neutral(duration_sec=1.5)
-            except:
-                pass
-            
-            time.sleep(0.2)  # Allow servos to settle
-            
-            # Double-check with direct servo commands to ensure exact position
-            try:
-                if left_leg.knee_servo is not None:
-                    left_leg.knee_servo.move(left_leg.knee_neutral)
-                if left_leg.ankle_servo is not None:
-                    left_leg.ankle_servo.move(left_leg.ankle_neutral)
-                if left_leg.hip_servo is not None:
-                    left_leg.hip_servo.move(left_leg.hip_neutral)
-            except:
-                pass
-            
-            try:
-                if right_leg.knee_servo is not None:
-                    right_leg.knee_servo.move(right_leg.knee_neutral)
-                if right_leg.ankle_servo is not None:
-                    right_leg.ankle_servo.move(right_leg.ankle_neutral)
-                if right_leg.hip_servo is not None:
-                    right_leg.hip_servo.move(right_leg.hip_neutral)
-            except:
-                pass
-            
-            time.sleep(0.3)  # Final settle time
-            print("✓ Both legs returned to neutral standing position (vertical)")
+            set_pose(NEUTRAL, 800)
+            time.sleep(0.5)
+            print("✓ Returned to neutral standing position")
         except Exception as e:
-            print(f"⚠️  Warning: Could not return legs to neutral: {e}")
+            print(f"⚠️  Warning: Could not return to neutral: {e}")
 
 
 if __name__ == "__main__":
@@ -657,19 +286,17 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\n\n🛑 Interrupted by user")
-        # The finally block in main() will handle returning to neutral
+        # Try to return to neutral
+        try:
+            set_pose(NEUTRAL, 800)
+        except:
+            pass
         print("Exiting...")
     except Exception as e:
         print(f"\n\n❌ Unexpected error: {e}")
         # Try to return to neutral if possible
         try:
-            LX16A.initialize(SERIAL_PORT, BAUD_RATE)
-            left_leg = Leg(LEFT_HIP, LEFT_KNEE, LEFT_ANKLE, "Left Leg")
-            right_leg = Leg(RIGHT_HIP, RIGHT_KNEE, RIGHT_ANKLE, "Right Leg")
-            if left_leg.knee_servo is not None and left_leg.ankle_servo is not None:
-                left_leg.go_to_neutral(duration_sec=1.0)
-            if right_leg.knee_servo is not None and right_leg.ankle_servo is not None:
-                right_leg.go_to_neutral(duration_sec=1.0)
+            set_pose(NEUTRAL, 800)
             print("✓ Returned to neutral after error")
         except:
             pass
