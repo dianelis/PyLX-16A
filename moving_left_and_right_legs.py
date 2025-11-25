@@ -30,13 +30,14 @@ RIGHT_HIP = 50    # Top
 
 # Neutral standing pose angles (degrees) - Saved from current position
 # These are the actual angles where the robot stands straight
+# Updated to compensate for battery weight on top
 NEUTRAL = {
-    LEFT_HIP:   215.3,
-    LEFT_KNEE:  123.6,
-    LEFT_ANKLE: 123.1,
-    RIGHT_HIP:   234.0,
-    RIGHT_KNEE:  107.3,
-    RIGHT_ANKLE: 177.4,
+    LEFT_HIP:   218.64,
+    LEFT_KNEE:  127.92,
+    LEFT_ANKLE: 112.80,
+    RIGHT_HIP:   234.00,
+    RIGHT_KNEE:  97.92,
+    RIGHT_ANKLE: 177.60,
 }
 
 # Legacy variables for backward compatibility
@@ -120,39 +121,38 @@ def pose_from_neutral(deltas_dict=None, **deltas):
 # WALKING SEQUENCE
 # ============================================================================
 
-# Left leg step sequence - Big knee and ankle movements, minimal hip
-# Swapped: Left leg now uses what was the right leg sequence
+# Left leg step sequence - No hip movement, only knee and ankle (smaller steps)
 LEFT_LEG_STEP_SEQUENCE = [
     # 1) Lift left leg: Bend knee and flex ankle to clear ground
     pose_from_neutral({
-        # Right leg stays in neutral (supporting leg)
-        RIGHT_HIP: 0,
+        # Right leg (supporting) stays in neutral
+        RIGHT_HIP: 0,     # No hip movement
         RIGHT_KNEE: 0,
         RIGHT_ANKLE: 0,
-        LEFT_HIP: 0,      # Hip stays neutral
-        LEFT_KNEE: +50,   # Big knee bend to lift leg
-        LEFT_ANKLE: -40,  # Ankle flexes up to clear ground
+        LEFT_HIP: 0,      # No hip movement
+        LEFT_KNEE: +30,   # Smaller knee bend to lift leg
+        LEFT_ANKLE: -25,  # Smaller ankle flex to clear ground
     }),
     
     # 2) Swing left leg forward: Extend knee and ankle forward
     pose_from_neutral({
         # Right leg stays in neutral
-        RIGHT_HIP: 0,
+        RIGHT_HIP: 0,     # No hip movement
         RIGHT_KNEE: 0,
         RIGHT_ANKLE: 0,
-        LEFT_HIP: 0,      # Hip stays neutral
-        LEFT_KNEE: +30,   # Partially extend knee for forward swing
-        LEFT_ANKLE: -20,  # Ankle extends forward
+        LEFT_HIP: 0,      # No hip movement
+        LEFT_KNEE: +18,   # Smaller knee extension for forward swing
+        LEFT_ANKLE: -12,  # Smaller ankle extension forward
     }),
     
     # 3) Place left foot down: Extend knee and ankle to contact ground
     pose_from_neutral({
         # Right leg stays in neutral
-        RIGHT_HIP: 0,
+        RIGHT_HIP: 0,     # No hip movement
         RIGHT_KNEE: 0,
         RIGHT_ANKLE: 0,
-        LEFT_HIP: 0,      # Hip stays neutral
-        LEFT_KNEE: +10,   # Slight knee bend for landing
+        LEFT_HIP: 0,      # No hip movement
+        LEFT_KNEE: +6,    # Smaller knee bend for landing
         LEFT_ANKLE: 0,    # Ankle neutral for ground contact
     }),
     
@@ -160,40 +160,39 @@ LEFT_LEG_STEP_SEQUENCE = [
     NEUTRAL,
 ]
 
-# Right leg step sequence - Big knee and ankle movements, minimal hip
-# Swapped: Right leg now uses what was the left leg sequence
+# Right leg step sequence - No hip movement, only knee and ankle (smaller steps)
 RIGHT_LEG_STEP_SEQUENCE = [
     # 1) Lift right leg: Bend knee and flex ankle to clear ground
     pose_from_neutral({
-        RIGHT_HIP: 0,     # Hip stays neutral
-        RIGHT_KNEE: +50,  # Big knee bend to lift leg
-        RIGHT_ANKLE: -40, # Ankle flexes up to clear ground
-        # Left leg stays in neutral (supporting leg)
-        LEFT_HIP: 0,
+        # Left leg (supporting) stays in neutral
+        LEFT_HIP: 0,      # No hip movement
         LEFT_KNEE: 0,
         LEFT_ANKLE: 0,
+        RIGHT_HIP: 0,     # No hip movement
+        RIGHT_KNEE: +30,  # Smaller knee bend to lift leg
+        RIGHT_ANKLE: -25, # Smaller ankle flex to clear ground
     }),
     
     # 2) Swing right leg forward: Extend knee and ankle forward
     pose_from_neutral({
-        RIGHT_HIP: 0,     # Hip stays neutral
-        RIGHT_KNEE: +30,  # Partially extend knee for forward swing
-        RIGHT_ANKLE: -20, # Ankle extends forward
         # Left leg stays in neutral
-        LEFT_HIP: 0,
+        LEFT_HIP: 0,      # No hip movement
         LEFT_KNEE: 0,
         LEFT_ANKLE: 0,
+        RIGHT_HIP: 0,     # No hip movement
+        RIGHT_KNEE: +18,  # Smaller knee extension for forward swing
+        RIGHT_ANKLE: -12, # Smaller ankle extension forward
     }),
     
     # 3) Place right foot down: Extend knee and ankle to contact ground
     pose_from_neutral({
-        RIGHT_HIP: 0,     # Hip stays neutral
-        RIGHT_KNEE: +10,  # Slight knee bend for landing
-        RIGHT_ANKLE: 0,  # Ankle neutral for ground contact
         # Left leg stays in neutral
-        LEFT_HIP: 0,
+        LEFT_HIP: 0,      # No hip movement
         LEFT_KNEE: 0,
         LEFT_ANKLE: 0,
+        RIGHT_HIP: 0,     # No hip movement
+        RIGHT_KNEE: +6,   # Smaller knee bend for landing
+        RIGHT_ANKLE: 0,   # Ankle neutral for ground contact
     }),
     
     # 4) Return to neutral
@@ -202,7 +201,8 @@ RIGHT_LEG_STEP_SEQUENCE = [
 
 def walk(steps=6, t_ms=500):
     """
-    Walk forward using alternating leg steps with big knee/ankle movements.
+    Walk forward using alternating leg steps with knee and ankle movements only.
+    No hip movement - uses only knee and ankle servos for walking.
     
     Args:
         steps: Total number of steps (will alternate between legs)
@@ -442,11 +442,11 @@ def main():
         # You can call either walk() or dance() here
         # Uncomment the one you want to use:
         
-        # Walk forward
-        # walk(steps=10, t_ms=300)
+        # Walk forward (slower with smaller steps)
+        walk(steps=10, t_ms=600)
         
         # Or dance
-        dance(duration_sec=15, t_ms=400)
+        # dance(duration_sec=15, t_ms=400)
         
         print("\n" + "=" * 60)
         print("Demo complete!")
