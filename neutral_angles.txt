@@ -1,0 +1,9 @@
+# Saved Neutral Angles - Initial Desired Position
+# Copy these values to the code constants
+
+LEFT_HIP_NEUTRAL = 215.3
+LEFT_KNEE_NEUTRAL = 123.6
+LEFT_ANKLE_NEUTRAL = 123.1
+RIGHT_HIP_NEUTRAL = 234.0
+RIGHT_KNEE_NEUTRAL = 107.3
+RIGHT_ANKLE_NEUTRAL = 177.4
